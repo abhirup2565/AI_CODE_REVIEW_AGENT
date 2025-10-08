@@ -1,7 +1,11 @@
-import redis
+import psycopg2
 
-try:
-    r = redis.Redis(host="localhost", port=6379)
-    print("PING:", r.ping())
-except Exception as e:
-    print("Error:", e)
+conn = psycopg2.connect(
+    dbname="ai_review_db",
+    user="ai_user",
+    password="ai_pass",
+    host="127.0.0.1",
+    port=5433
+)
+print("Connected!")
+conn.close()
