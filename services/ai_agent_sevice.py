@@ -57,6 +57,43 @@ def extract_response_content(response):
 
     # Fallback to string
     return str(response)
+
+#---------------------------------------
+import re
+
+def extract_json_from_response(text: str):
+    """
+    Extract valid JSON list/dict from model output.
+    Handles cases where the model wraps output in ```json blocks or explanations.
+    """
+    if not text:
+        return [{"type": "error", "description": "Empty AI response", "suggestion": "Retry"}]
+
+    # Try direct JSON parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting from ```json ... ```
+    match = re.search(r"```json(.*?)```", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except Exception:
+            pass
+
+    # Try extracting first valid-looking JSON
+    match = re.search(r"(\[.*\]|\{.*\})", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except Exception:
+            pass
+
+    # fallback
+    return [{"type": "error", "line": 0, "description": f"Unparsable AI output: {text[:120]}", "suggestion": "Review manually"}]
+
 # --- Main analysis workflow ---
 def analyze_pr_files(pr_files: List[dict]) -> List[dict]:
     """
@@ -83,18 +120,20 @@ def analyze_pr_files(pr_files: List[dict]) -> List[dict]:
         for chunk in chunks:
                 attempt = 0
                 user_prompt = (
-                    f"Analyze the following {ext} file `{filename}` (status: {status}). "
-                    f"Find issues and return a JSON list of objects like this:\n"
-                    f"[{{'type': 'bug'|'style', 'line': int, 'description': str, 'suggestion': str}}]\n\n"
+                    f"You are an expert code reviewer. Analyze the following {ext} file `{filename}` (status: {status}). "
+                    f"Return *only* valid JSON with this structure — no explanations, no markdown, no text outside JSON:\n\n"
+                    f"[\n  {{'type': 'bug'|'style', 'line': int, 'description': str, 'suggestion': str}}\n]\n\n"
                     f"Code:\n{chunk}"
                 )
                 while attempt < MAX_RETRIES:
                     try:
                         response = agent.invoke({"messages": [{"role": "user", "content": user_prompt}]})
                         content = extract_response_content(response)
+                        print(f"\n===== RAW MODEL OUTPUT for {filename} =====\n{content}\n==========================================\n")
+                        ai_issues = extract_json_from_response(content)
                         # --- Parse AI output safely ---
                         try:
-                            ai_issues = json.loads(content)
+                            # ai_issues = json.loads(content)
                             if isinstance(ai_issues, list):
                                 for issue in ai_issues:
                                     if isinstance(issue, dict):
@@ -142,5 +181,4 @@ def analyze_pr_files(pr_files: List[dict]) -> List[dict]:
             "extension": ext,
             "analysis": file_analysis
         })
-
     return results
