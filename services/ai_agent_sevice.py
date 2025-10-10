@@ -72,7 +72,7 @@ def get_agent():
 #  3. Main Workflow
 # ==========================
 
-def analyze_pr_files(pr_files: List[dict]) -> PRResponse:
+def analyze_pr_files(task_id:int ,pr_files: List[dict]) -> PRResponse:
     """
     Accepts PR file data [{filename: ..., extension: ..., content: ..., status: ...}]
     Splits large PRs into chunks and sends them to Gemini to produce structured results.
@@ -168,6 +168,6 @@ def analyze_pr_files(pr_files: List[dict]) -> PRResponse:
     )
 
     result = AnalysisResult(files=all_file_results, summary=summary)
-    response = PRResponse(task_id="abc123", status="completed", results=result)
+    response = PRResponse(task_id=task_id, status="completed", results=result)
     return response.model_dump()
 
