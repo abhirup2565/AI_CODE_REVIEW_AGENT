@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: ai_review_postgres_new
+    environment:
+      POSTGRES_USER: ai_user
+      POSTGRES_PASSWORD: ai_pass
+      POSTGRES_DB: ai_review_db
+    ports:
+      - "5432:5432"  # changed host port to 5433 to avoid conflicts
+    volumes:
+      - pgdata_new:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: ai_review_redis_new
+    ports:
+      - "6379:6379"  # changed host port to 6380 to avoid conflicts
+
+volumes:
+  pgdata_new:
