@@ -14,45 +14,27 @@ celery_app = Celery(
 
 # @celery_app.task(bind=True)
 @shared_task(bind=True)
-def analyze_pr_task(self,repo_url: str, pr_number: int, github_token: str = None):
+def analyze_pr_task(self, repo_url: str, pr_number: int, github_token: str = None):
     """
-    PR analysis .
+    Fetch PR files, run AI analysis, and return structured results.
     """
     task_id = self.request.id
-    try:
-        #fetch files
-        self.update_state(state="PROGRESS", meta={"progress": "fetching PR files"})
-        pr_files = get_pr_files(repo_url, pr_number, github_token)
-        if not pr_files:
-            return {"status": "no_files", "message": "No files found in PR."}
-        self.update_state(state="PROGRESS", meta={"progress": f"{len(pr_files)} files fetched"})
+    # Step 1: Fetch PR files
+    self.update_state(state="PROGRESS", meta={"progress": "fetching PR files"})
+    pr_files = get_pr_files(repo_url, pr_number, github_token)
+    if not pr_files:
+        return {"status": "no_files", "message": "No files found in PR."}
 
-        # AI  analysis
-        self.update_state(state="PROGRESS", meta={"progress": "running AI analysis"})
-        analysis_results = analyze_pr_files(pr_files)
-        total_files = len(analysis_results)
-        total_issues = sum(len(f["analysis"]) for f in analysis_results)
-        critical_issues =  sum(
-        1
-        for f in analysis_results
-        for i in f.get("analysis", [])
-        if isinstance(i, dict) and i.get("type") == "bug"
-        )
-        # --- Step 4: structure results ---
-        files_output = [
-            {
-                "name": f["file"],
-                "issues": f["analysis"]
-            } for f in analysis_results
-        ]
-        summary_output = {
-                "total_files": total_files,
-                "total_issues": total_issues,
-                "critical_issues": critical_issues
-            }
-        return format_analysis_result(task_id, files_output, summary_output)
-    except Exception as e:
-        return format_analysis_result(task_id, error=e)
+    self.update_state(state="PROGRESS", meta={"progress": f"{len(pr_files)} files fetched"})
+
+    # Step 2: Run AI analysis
+    self.update_state(state="PROGRESS", meta={"progress": "running AI analysis"})
+    analysis_results = analyze_pr_files(pr_files)  # Already a dict from Pydantic model
+
+    # Step 3: Return results directly
+    # LLM already provides 'results' with 'files' and 'summary'
+    return analysis_results
+
 
 
     #storing in db

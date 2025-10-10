@@ -1,107 +1,85 @@
-import os,getpass,time,json
-from typing import List
+import os, getpass, time, json
+from typing import List, Optional
+from pydantic import BaseModel, Field
 from langgraph.prebuilt import create_react_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool
-from langchain_core.messages import AIMessage
+from langchain.schema import AIMessage
 from services.chunk_service import chunk_code
 from dotenv import load_dotenv
+
+
+# ==========================
+#  1. Define Pydantic Models
+# ==========================
+
+class Issue(BaseModel):
+    type: str = Field(..., description="Type of issue, e.g., 'bug', 'style', 'performance'")
+    line: int = Field(..., description="Line number of the issue")
+    description: str = Field(..., description="Brief description of the issue")
+    suggestion: Optional[str] = Field(None, description="Optional suggestion for improvement")
+
+
+class FileAnalysis(BaseModel):
+    name: str
+    issues: List[Issue]
+
+
+class Summary(BaseModel):
+    total_files: int
+    total_issues: int
+    critical_issues: int
+
+
+class AnalysisResult(BaseModel):
+    files: List[FileAnalysis]
+    summary: Summary
+
+
+class PRResponse(BaseModel):
+    task_id: str
+    status: str
+    results: AnalysisResult
+
+
+# ==========================
+#  2. Initialize Model + Agent
+# ==========================
+
 load_dotenv()
-# --- Defining individual tools ---
-@tool
-def analyze_code_chunk(code_chunk: str) -> str:
-    """
-    Analyze a code chunk and identify potential issues, improvements, and suggestions.
-    """
-    return f"Analyzing code chunk of length {len(code_chunk)} — possible improvements will be listed here."
 
-@tool
-def suggest_fixes(issue_description: str) -> str:
-    """
-    Suggest fixes for a given issue description.
-    """
-    return f"Suggested fix for: {issue_description}"
-
-#list all the tools for LLM
-tools=[analyze_code_chunk,suggest_fixes]
-
-# Initialize LangGraph model
 if not os.environ.get("GOOGLE_API_KEY"):
-  os.environ["GOOGLE_API_KEY"] = getpass.getpass("Enter API key for Google Gemini: ")
+    os.environ["GOOGLE_API_KEY"] = getpass.getpass("Enter API key for Google Gemini: ")
+
 
 def get_agent():
+    """Initialize Gemini model and tool schema using the Pydantic model."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "generate_analysis_result",
+                "description": "Return code analysis results in a structured format.",
+                # 👇 automatically generate JSON schema from Pydantic model
+                "parameters": AnalysisResult.model_json_schema(),
+            },
+        }
+    ]
     model = init_chat_model("gemini-2.5-flash", model_provider="google_genai")
-    agent = create_react_agent(model, tools)
-    return agent
+    return create_react_agent(model, tools)
 
-#-----------------------
-def extract_response_content(response):
+
+# ==========================
+#  3. Main Workflow
+# ==========================
+
+def analyze_pr_files(pr_files: List[dict]) -> PRResponse:
     """
-    Safely extract text from agent.invoke() output.
-    Handles dict, list, or AIMessage objects.
-    """
-    # If it's a dict with messages
-    if isinstance(response, dict):
-        messages = response.get("messages", [])
-        if messages:
-            msg = messages[-1]
-            if hasattr(msg, "content"):
-                return msg.content
-            elif isinstance(msg, dict):
-                return msg.get("content", "")
-        return str(response)
-
-    # If it's a single AIMessage object
-    elif isinstance(response, AIMessage):
-        return response.content
-
-    # Fallback to string
-    return str(response)
-
-#---------------------------------------
-import re
-
-def extract_json_from_response(text: str):
-    """
-    Extract valid JSON list/dict from model output.
-    Handles cases where the model wraps output in ```json blocks or explanations.
-    """
-    if not text:
-        return [{"type": "error", "description": "Empty AI response", "suggestion": "Retry"}]
-
-    # Try direct JSON parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try extracting from ```json ... ```
-    match = re.search(r"```json(.*?)```", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1).strip())
-        except Exception:
-            pass
-
-    # Try extracting first valid-looking JSON
-    match = re.search(r"(\[.*\]|\{.*\})", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
-
-    # fallback
-    return [{"type": "error", "line": 0, "description": f"Unparsable AI output: {text[:120]}", "suggestion": "Review manually"}]
-
-# --- Main analysis workflow ---
-def analyze_pr_files(pr_files: List[dict]) -> List[dict]:
-    """
-    Accepts PR file data {filename: {"extension": ..., "content": ...}}
-    Splits large PRs into manageable chunks and sends to the agent.
+    Accepts PR file data [{filename: ..., extension: ..., content: ..., status: ...}]
+    Splits large PRs into chunks and sends them to Gemini to produce structured results.
+    Returns a PRResponse object validated via Pydantic.
     """
     agent = get_agent()
-    results = []
+    all_file_results = []
 
     for f in pr_files:
         filename = f["filename"]
@@ -112,73 +90,84 @@ def analyze_pr_files(pr_files: List[dict]) -> List[dict]:
         if not content:
             continue
 
-
-        chunks = chunk_code(content) #default chunk size is set
-        file_analysis = []
-        MAX_RETRIES = 5
+        chunks = chunk_code(content)
+        file_issues = []
 
         for chunk in chunks:
-                attempt = 0
-                user_prompt = (
-                    f"You are an expert code reviewer. Analyze the following {ext} file `{filename}` (status: {status}). "
-                    f"Return *only* valid JSON with this structure — no explanations, no markdown, no text outside JSON:\n\n"
-                    f"[\n  {{'type': 'bug'|'style', 'line': int, 'description': str, 'suggestion': str}}\n]\n\n"
-                    f"Code:\n{chunk}"
-                )
-                while attempt < MAX_RETRIES:
+            attempt = 0
+            MAX_RETRIES = 5
+            prompt = (
+                f"You are an expert code reviewer. Analyze the following {ext} file `{filename}` (status: {status}). "
+                "Return *only* valid JSON by calling the tool `generate_analysis_result`. "
+                "Do not include markdown, explanations, or extra text.\n\n"
+                f"Code:\n{chunk}"
+            )
+
+            while attempt < MAX_RETRIES:
+                try:
+                    response = agent.invoke({
+                        "messages": [{"role": "user", "content": prompt}]
+                    })
+                    print("TYPE OF RESPONSE:", type(response))
+                    print("RESPONSE CONTENT:", response)
+                    # structured_output = response.choices[0].message.tool_calls[0].function.arguments
+                    structured_output = None
+                    # Find the AIMessage that contains the tool call
+                    for msg in response["messages"]:
+                        if isinstance(msg, AIMessage):
+                            func_call = msg.additional_kwargs.get("function_call")
+                            if func_call and "arguments" in func_call:
+                                # arguments is a JSON string
+                                structured_output = json.loads(func_call["arguments"])
+                                break
+
+
+                    # ✅ validate using Pydantic
                     try:
-                        response = agent.invoke({"messages": [{"role": "user", "content": user_prompt}]})
-                        content = extract_response_content(response)
-                        print(f"\n===== RAW MODEL OUTPUT for {filename} =====\n{content}\n==========================================\n")
-                        ai_issues = extract_json_from_response(content)
-                        # --- Parse AI output safely ---
-                        try:
-                            # ai_issues = json.loads(content)
-                            if isinstance(ai_issues, list):
-                                for issue in ai_issues:
-                                    if isinstance(issue, dict):
-                                        file_analysis.append(issue)
-                                    else:
-                                        file_analysis.append({
-                                            "type": "info",
-                                            "line": 0,
-                                            "description": str(issue),
-                                            "suggestion": "Check manually"
-                                        })
-                            else:
-                                file_analysis.append({
-                                    "type": "info",
-                                    "line": 0,
-                                    "description": str(ai_issues),
-                                    "suggestion": "Check manually"
-                                })
-                        except json.JSONDecodeError:
-                            # fallback dummy
-                            file_analysis.append({
-                            "type": "error",
-                            "line": 0,
-                            "description": f"Unparsable AI output: {content[:120]}",
-                            "suggestion": "Review manually"
-                            })
-                        break
-                    except Exception as e:
-                        if "429" in str(e):
-                            wait = max(2 ** attempt, 60)  # exponential backoff, max 60s
-                            time.sleep(wait)
-                            attempt += 1
-                        else:
-                            file_analysis.append({
-                            "type": "error",
-                            "line": 0,
-                            "description": f"Error analyzing chunk: {e}",
-                            "suggestion": "Retry manually"
-                        })
+                        parsed = AnalysisResult.model_validate(structured_output)
+                        # Add validated issues
+                        for file in parsed.files:
+                            file_issues.extend(file.issues)
+                        break  # success, stop retrying
+                    except Exception as parse_err:
+                        file_issues.append(Issue(
+                            type="error",
+                            line=0,
+                            description=f"Parsing error: {parse_err}",
+                            suggestion="Verify JSON structure."
+                        ))
                         break
 
-        results.append({
-            "file": filename,
-            "status": status,
-            "extension": ext,
-            "analysis": file_analysis
-        })
-    return results
+                except Exception as e:
+                    if "429" in str(e):  # rate limit
+                        wait = min(2 ** attempt, 60)
+                        time.sleep(wait)
+                        attempt += 1
+                    else:
+                        file_issues.append(Issue(
+                            type="error",
+                            line=0,
+                            description=f"Error analyzing chunk: {e}",
+                            suggestion="Check manually"
+                        ))
+                        break
+
+        all_file_results.append(FileAnalysis(name=filename, issues=file_issues))
+
+    # --- Prepare summary ---
+    total_files = len(all_file_results)
+    total_issues = sum(len(f.issues) for f in all_file_results)
+    critical_issues = sum(
+        1 for f in all_file_results for i in f.issues if i.type == "bug"
+    )
+
+    summary = Summary(
+        total_files=total_files,
+        total_issues=total_issues,
+        critical_issues=critical_issues
+    )
+
+    result = AnalysisResult(files=all_file_results, summary=summary)
+    response = PRResponse(task_id="abc123", status="completed", results=result)
+    return response.model_dump()
+
