@@ -52,7 +52,7 @@ def analyze_pr_task(self, repo_url: str, pr_number: int, github_token: str = Non
             )
             db.add(file_entry)
         db.commit()
-        return analysis_results
+        return {"status": "completed", "message": "Analysis is completed"}
     except Exception as e:
         db.rollback()
         raise e
