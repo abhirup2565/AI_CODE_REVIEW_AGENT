@@ -9,6 +9,7 @@ from .db_models import (
     TaskResult,
     FileResult
 )
+from .user_models import User
 
 __all__=["Issue",
     "FileAnalysis",
@@ -16,4 +17,5 @@ __all__=["Issue",
     "AnalysisResult",
     "PRResponse",
     "TaskResult",
-    "FileResult"]
+    "FileResult",
+    "User"]
