@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.orm import relationship
 from datetime import datetime,timezone
 from pydantic import BaseModel, EmailStr
 from werkzeug.security import generate_password_hash,check_password_hash
@@ -11,6 +12,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    tasks = relationship("TaskResult", back_populates="user", cascade="all, delete")
 
     #Functions Related to db
     def __repr__(self):
@@ -24,8 +26,8 @@ class User(Base):
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.hashed_password, password)
 
-    # Save user
-    def save(self):
+    # Create user
+    def create(self):
         db = SessionLocal()
         try:
             db.add(self)
@@ -56,6 +58,6 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class UserResponse(BaseModel):
-    id: int
-    email: EmailStr
+# class UserResponse(BaseModel):
+#     id: int
+#     email: EmailStr
