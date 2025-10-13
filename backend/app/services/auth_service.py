@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta,timezone
-from jose import JWTError, jwt
+from jose import JWTError, jwt, ExpiredSignatureError
 from fastapi import HTTPException, status
 from backend.app.config import settings
 
@@ -21,7 +21,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     jti = str(uuid.uuid4())
-    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) +(expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
     to_encode.update({"exp": expire, "jti": jti})
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return token,jti,expire
@@ -31,5 +31,15 @@ def verify_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except ExpiredSignatureError as e:
+        # Specific for expired tokens
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token has expired: {str(e)}"
+        )
+    except JWTError as e:
+        # Any other JWT error (signature, malformed, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )

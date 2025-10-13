@@ -9,7 +9,7 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     jti = Column(String, unique=True, nullable=False, index=True)  # JWT ID for token
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
     expires_at = Column(DateTime, nullable=False)   # helps cleanup expired tokens
     revoked = Column(Boolean, default=False, index=True)
     user = relationship("User", backref="refresh_tokens")
@@ -19,4 +19,4 @@ class BlockedAccessToken(Base):
     __tablename__ = "blocked_access_tokens"
     id = Column(Integer, primary_key=True, index=True)
     jti = Column(String, unique=True, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
