@@ -50,7 +50,7 @@ def analyze_pr_files(task_id:int ,pr_files: List[dict]) -> PRResponse:
         status = f["status"]
         ext = f["extension"]
 
-        if not content:
+        if content is None:
             continue
 
         chunks = chunk_code(content)
@@ -85,7 +85,7 @@ def analyze_pr_files(task_id:int ,pr_files: List[dict]) -> PRResponse:
                                 break
 
 
-                    # ✅ validate using Pydantic
+                    #  validate using Pydantic
                     try:
                         parsed = AnalysisResult.model_validate(structured_output)
                         # Add validated issues

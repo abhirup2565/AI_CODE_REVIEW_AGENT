@@ -10,7 +10,10 @@ class TaskResult(Base):
     task_id = Column(String, unique=True, nullable=False)
     status = Column(String, nullable=False)
     summary = Column(JSON, nullable=True)
+    # Relationships
     files = relationship("FileResult", back_populates="task", cascade="all, delete")
+    user_id = Column(Integer, ForeignKey("users.id"))  # link to User table
+    user = relationship("User", back_populates="tasks") 
 
 class FileResult(Base):
     __tablename__ = "file_result"
