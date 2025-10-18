@@ -1,7 +1,3 @@
-Perfect! Based on your clarifications, here’s a detailed and structured **`README.md` draft** for your project:
-
----
-
 # Code PR Review System
 
 ⚡ Automate Pull Request Reviews using AI with FastAPI, Celery, and Google Gemini LLM
